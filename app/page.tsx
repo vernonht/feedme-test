@@ -144,8 +144,7 @@ export default function Home() {
                   COMPLETE.
                 </li>
                 <li>
-                  Removing a bot cancels its current job and returns the order
-                  to PENDING.
+                  Removing a bot cancels its current job and the pending order will remain in PENDING.
                 </li>
               </ul>
             </div>
