@@ -32,7 +32,7 @@ describe("useStore simulator", () => {
     jest.useRealTimers()
   })
 
-  test("removing bot cancels processing and returns order to pending", () => {
+  test("removing bot cancels processing", () => {
     jest.useFakeTimers()
     const store = require("../store/useStore")
     const s = store.default.getState()
@@ -42,7 +42,7 @@ describe("useStore simulator", () => {
     s.removeBot()
     jest.advanceTimersByTime(PROCESS_TIME)
     const after = store.default.getState()
-    // order should be back in pending and not in complete
+    // order should be still in pending and not in complete
     expect(after.pending.length).toBeGreaterThanOrEqual(1)
     expect(after.complete.length).toBe(0)
     jest.useRealTimers()

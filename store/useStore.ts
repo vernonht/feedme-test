@@ -87,25 +87,9 @@ export const useStore = create<StoreState>((set: SetFn, get: GetFn) => ({
       }
       const order = bot.currentOrder
       set((s: StoreState) => {
-        let pending = s.pending
-        if (order.type === "VIP") {
-          const lastVipIndex = pending
-            .map((o: Order) => o.type)
-            .lastIndexOf("VIP")
-          if (lastVipIndex === -1) pending = [order, ...pending]
-          else
-            pending = [
-              ...pending.slice(0, lastVipIndex + 1),
-              order,
-              ...pending.slice(lastVipIndex + 1),
-            ]
-        } else {
-          pending = [...pending, order]
-        }
         return {
           ...s,
           bots: s.bots.filter((x: Bot) => x.id !== newestId),
-          pending,
         }
       })
     } else {
