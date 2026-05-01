@@ -1,6 +1,7 @@
 "use client"
 
 import Image from "next/image"
+import { useEffect } from "react"
 import useStore, { Order, Bot } from "../store/useStore"
 import { NORMAL_COLOR, VIP_COLOR } from "@/constants"
 
@@ -8,9 +9,23 @@ export default function Home() {
   const pending = useStore((s) => s.pending)
   const complete = useStore((s) => s.complete)
   const bots = useStore((s) => s.bots)
+  const isLoading = useStore((s) => s.isLoading)
+  const isStreaming = useStore((s) => s.isStreaming)
+  const error = useStore((s) => s.error)
   const newOrder = useStore((s) => s.newOrder)
   const addBot = useStore((s) => s.addBot)
   const removeBot = useStore((s) => s.removeBot)
+  const connectStateStream = useStore((s) => s.connectStateStream)
+  const disconnectStateStream = useStore((s) => s.disconnectStateStream)
+  const clearError = useStore((s) => s.clearError)
+
+  useEffect(() => {
+    connectStateStream()
+
+    return () => {
+      disconnectStateStream()
+    }
+  }, [connectStateStream, disconnectStateStream])
 
   function renderOrder(o: Order) {
     return (
@@ -19,7 +34,7 @@ export default function Home() {
         className="flex items-center justify-between gap-4 rounded border p-2"
       >
         <div className="flex items-center gap-3">
-          <div className="w-8 text-sm font-semibold">#{o.id}</div>
+          <div className="w-16 text-sm font-semibold text-black">ID-{o.id}</div>
           <div
             className="rounded-md px-2 text-sm text-black"
             style={{ background: o.type === "VIP" ? VIP_COLOR : NORMAL_COLOR }}
@@ -28,11 +43,9 @@ export default function Home() {
           </div>
         </div>
         <div className="text-sm text-zinc-500">
-          {o.completedAt ? (
-            <span className="text-green-500">Completed at:{new Date(o.completedAt).toLocaleTimeString()}</span>
-          ) : (
-            new Date(o.createdAt).toLocaleTimeString()
-          )}
+          <span className={o.status.toLowerCase() === "completed" ? "text-green-500" : ""}>
+            {o.status.toLowerCase() === "completed" ? "Completed" : "Created"}: {new Date(o.createdAt).toLocaleTimeString()}
+          </span>
         </div>
       </div>
     )
@@ -50,24 +63,47 @@ export default function Home() {
               height={20}
             />
             <h1 className="text-2xl font-semibold">
-              FeedMe Test - OMS
+              McD - OMS
             </h1>
+            <span
+              className={`rounded px-2 py-1 text-xs ${
+                isStreaming
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-zinc-200 text-zinc-600"
+              }`}
+            >
+              {isStreaming ? "LIVE" : "OFFLINE"}
+            </span>
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => newOrder("Normal")}
+              onClick={() => void newOrder("Normal")}
+              disabled={isLoading}
               className="rounded bg-slate-800 px-4 py-2 text-white"
             >
               New Normal Order
             </button>
             <button
-              onClick={() => newOrder("VIP")}
+              onClick={() => void newOrder("VIP")}
+              disabled={isLoading}
               className="rounded bg-yellow-400 px-4 py-2"
             >
               New VIP Order
             </button>
           </div>
         </header>
+
+        {error && (
+          <div className="flex items-center justify-between rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <span>{error}</span>
+            <button
+              onClick={clearError}
+              className="rounded bg-red-600 px-2 py-1 text-xs text-white"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <section className="grid gap-6 md:grid-cols-3">
           <div className="col-span-2 space-y-4">
@@ -102,13 +138,15 @@ export default function Home() {
               </h3>
               <div className="mb-4 flex gap-2">
                 <button
-                  onClick={addBot}
+                  onClick={() => void addBot()}
+                  disabled={isLoading}
                   className="rounded-lg bg-green-500 px-5 py-1 text-white"
                 >
                   + Bot
                 </button>
                 <button
-                  onClick={removeBot}
+                  onClick={() => void removeBot()}
+                  disabled={isLoading}
                   className="rounded-lg bg-red-500 px-5 py-1 text-white"
                 >
                   - Bot
@@ -140,11 +178,10 @@ export default function Home() {
                 <li>Click to create Normal or VIP orders.</li>
                 <li>VIP orders are prioritized over Normal orders.</li>
                 <li>
-                  Each bot processes one order for 10s, then moves it to
-                  COMPLETE.
+                  Order progression is backend-authoritative and reflected in queue state.
                 </li>
                 <li>
-                  Removing a bot cancels its current job and the pending order will remain in PENDING.
+                  Removing a bot updates backend bot allocation and queue assignment.
                 </li>
               </ul>
             </div>

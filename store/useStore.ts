@@ -1,156 +1,148 @@
+"use client"
+
 import { create } from "zustand"
-import { PROCESS_TIME } from "../constants"
+import {
+  addBotAction,
+  createOrderAction,
+  removeBotAction,
+} from "../app/actions/queueActions"
+import { Bot, Order, OrderType, QueueState } from "@/lib/queue/contracts"
+import { createStateSocket } from "../lib/queue/stateSocket"
 
-type OrderType = "VIP" | "Normal"
-
-export type Order = {
-  id: number
-  type: OrderType
-  createdAt: number
-  completedAt?: number
-}
-
-export type Bot = {
-  id: number
-  status: "IDLE" | "BUSY"
-  currentOrder: Order | null
-  timeoutId: number | null
-}
+let stateSocket: WebSocket | null = null
 
 type StoreState = {
-  nextOrderId: number
   pending: Order[]
   complete: Order[]
   bots: Bot[]
-  newOrder: (type: OrderType) => void
-  addBot: () => void
-  removeBot: () => void
-  assignOrders: () => void
+  isLoading: boolean
+  isStreaming: boolean
+  error: string | null
+  newOrder: (type: OrderType) => Promise<void>
+  addBot: () => Promise<void>
+  removeBot: () => Promise<void>
+  connectStateStream: () => void
+  disconnectStateStream: () => void
+  clearError: () => void
 }
 
 type SetFn = (updater: (s: StoreState) => StoreState) => void
-type GetFn = () => StoreState
 
-export const useStore = create<StoreState>((set: SetFn, get: GetFn) => ({
-  nextOrderId: 1,
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return "Unexpected API error"
+}
+
+const applyQueueState = (current: StoreState, queue: QueueState): StoreState => ({
+  ...current,
+  pending: queue.pending,
+  complete: queue.complete,
+  bots: queue.bots,
+  isLoading: false,
+})
+
+export const useStore = create<StoreState>((set: SetFn) => ({
   pending: [],
   complete: [],
   bots: [],
+  isLoading: false,
+  isStreaming: false,
+  error: null,
 
-  newOrder(type) {
-    const id = get().nextOrderId
-    const order: Order = { id, type, createdAt: Date.now() }
-    set((s: StoreState) => {
-      let pending = s.pending
-      if (type === "VIP") {
-        const lastVipIndex = pending
-          .map((o: Order) => o.type)
-          .lastIndexOf("VIP")
-        if (lastVipIndex === -1) pending = [order, ...pending]
-        else
-          pending = [
-            ...pending.slice(0, lastVipIndex + 1),
-            order,
-            ...pending.slice(lastVipIndex + 1),
-          ]
-      } else {
-        pending = [...pending, order]
-      }
-      return { ...s, nextOrderId: id + 1, pending }
-    })
-    get().assignOrders()
-  },
+  async newOrder(type) {
+    set((s: StoreState) => ({ ...s, isLoading: true, error: null }))
 
-  addBot() {
-    set((s: StoreState) => {
-      const id =
-        s.bots.length === 0 ? 1 : Math.max(...s.bots.map((x: Bot) => x.id)) + 1
-      return {
-        ...s,
-        bots: [
-          ...s.bots,
-          { id, status: "IDLE", currentOrder: null, timeoutId: null },
-        ],
-      }
-    })
-    get().assignOrders()
-  },
-
-  removeBot() {
-    const { bots } = get()
-    if (bots.length === 0) return
-    const newestId = Math.max(...bots.map((b) => b.id))
-    const bot = bots.find((b) => b.id === newestId)!
-    if (bot.status === "BUSY" && bot.currentOrder) {
-      if (bot.timeoutId) {
-        clearTimeout(bot.timeoutId)
-      }
-      const order = bot.currentOrder
-      set((s: StoreState) => {
-        return {
-          ...s,
-          bots: s.bots.filter((x: Bot) => x.id !== newestId),
-        }
-      })
-    } else {
+    try {
+      await createOrderAction(type)
+      set((s: StoreState) => ({ ...s, isLoading: false }))
+    } catch (error) {
       set((s: StoreState) => ({
         ...s,
-        bots: s.bots.filter((x: Bot) => x.id !== newestId),
+        isLoading: false,
+        error: getErrorMessage(error),
       }))
     }
-    get().assignOrders()
   },
 
-  assignOrders() {
-    set((s: StoreState) => {
-      let pending = s.pending
-      let bots = s.bots.map((bot: Bot) => ({ ...bot }))
-      // Collect all order ids currently being processed by bots
-      const processingOrderIds = new Set(
-        bots
-          .filter((b) => b.status === "BUSY" && b.currentOrder)
-          .map((b) => b.currentOrder!.id)
-      )
-      for (const bot of bots) {
-        if (bot.status === "IDLE") {
-          // Only consider orders not already being processed
-          const availablePending = pending.filter(
-            (o) => !processingOrderIds.has(o.id)
-          )
-          const vip = availablePending.find((o: Order) => o.type === "VIP")
-          const next = vip ?? availablePending[0] ?? null
-          if (next) {
-            bot.status = "BUSY"
-            bot.currentOrder = next
-            processingOrderIds.add(next.id)
-            const tid = window.setTimeout(() => {
-              set((ss: StoreState) => ({
-                ...ss,
-                pending: ss.pending.filter((o: Order) => o.id !== next.id),
-                complete: [
-                  ...ss.complete,
-                  { ...next, completedAt: Date.now() },
-                ],
-                bots: ss.bots.map((b: Bot) =>
-                  b.id === bot.id
-                    ? {
-                        ...b,
-                        status: "IDLE",
-                        currentOrder: null,
-                        timeoutId: null,
-                      }
-                    : b
-                ),
-              }))
-              get().assignOrders()
-            }, PROCESS_TIME)
-            bot.timeoutId = tid
-          }
-        }
-      }
-      return { ...s, bots, pending }
-    })
+  async addBot() {
+    set((s: StoreState) => ({ ...s, isLoading: true, error: null }))
+
+    try {
+      await addBotAction()
+      set((s: StoreState) => ({ ...s, isLoading: false }))
+    } catch (error) {
+      set((s: StoreState) => ({
+        ...s,
+        isLoading: false,
+        error: getErrorMessage(error),
+      }))
+    }
+  },
+
+  async removeBot() {
+    set((s: StoreState) => ({ ...s, isLoading: true, error: null }))
+
+    try {
+      await removeBotAction()
+      set((s: StoreState) => ({ ...s, isLoading: false }))
+    } catch (error) {
+      set((s: StoreState) => ({
+        ...s,
+        isLoading: false,
+        error: getErrorMessage(error),
+      }))
+    }
+  },
+
+  connectStateStream() {
+    if (stateSocket && stateSocket.readyState <= WebSocket.OPEN) {
+      return
+    }
+
+    try {
+      stateSocket = createStateSocket({
+        onState: (queue) => {
+          set((s: StoreState) => ({ ...applyQueueState(s, queue), error: null }))
+        },
+        onError: (message) => {
+          set((s: StoreState) => ({ ...s, isStreaming: false, error: message }))
+        },
+        onOpen: () => {
+          set((s: StoreState) => ({ ...s, isStreaming: true, error: null }))
+        },
+        onClose: () => {
+          stateSocket = null
+          set((s: StoreState) => ({ ...s, isStreaming: false }))
+        },
+      })
+    } catch (error) {
+      set((s: StoreState) => ({
+        ...s,
+        isStreaming: false,
+        error: getErrorMessage(error),
+      }))
+    }
+  },
+
+  disconnectStateStream() {
+    if (!stateSocket) {
+      set((s: StoreState) => ({ ...s, isStreaming: false }))
+      return
+    }
+
+    stateSocket.close()
+    stateSocket = null
+    set((s: StoreState) => ({ ...s, isStreaming: false }))
+  },
+
+  clearError() {
+    set((s: StoreState) => ({ ...s, error: null }))
   },
 }))
+
+export type { Order, Bot } from "@/lib/queue/contracts"
 
 export default useStore

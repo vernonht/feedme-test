@@ -1,96 +1,105 @@
 import { jest } from "@jest/globals"
-import useStore from "../store/useStore"
-import { PROCESS_TIME } from "../constants"
+import { QueueState } from "../lib/queue/contracts"
 
-describe("useStore simulator", () => {
+const actionMocks = {
+  createOrderAction: jest.fn(),
+  addBotAction: jest.fn(),
+  removeBotAction: jest.fn(),
+}
+
+let socketHandlers: {
+  onState: (state: QueueState) => void
+  onError: (message: string) => void
+  onOpen?: () => void
+  onClose?: () => void
+} | null = null
+
+const socketMock = {
+  close: jest.fn(),
+  readyState: WebSocket.CONNECTING,
+}
+
+jest.mock("../app/actions/queueActions", () => actionMocks)
+jest.mock("../lib/queue/stateSocket", () => ({
+  createStateSocket: jest.fn((handlers) => {
+    socketHandlers = handlers
+    return socketMock
+  }),
+}))
+
+const queueState: QueueState = {
+  pending: [
+    {
+      id: 1,
+      type: "VIP",
+      status: "pending",
+      createdAt: "2026-05-01T12:00:00Z",
+    },
+  ],
+  complete: [],
+  bots: [
+    {
+      id: 1,
+      status: "IDLE",
+      currentOrder: null,
+    },
+  ],
+}
+
+describe("useStore with server actions", () => {
   beforeEach(() => {
-    // reset the store by reloading module state
     jest.resetModules()
+    actionMocks.createOrderAction.mockReset()
+    actionMocks.addBotAction.mockReset()
+    actionMocks.removeBotAction.mockReset()
+    socketHandlers = null
+    socketMock.close.mockReset()
+    socketMock.readyState = WebSocket.CONNECTING
   })
 
-  test("creates orders and prioritizes VIP", () => {
-    const { newOrder, pending } = useStore.getState()
-    newOrder("Normal")
-    newOrder("Normal")
-    newOrder("VIP")
-    const p = useStore.getState().pending
-    expect(p.length).toBe(3)
-    // VIP should be placed before normals (but after existing VIPs)
-    expect(p[0].type).toBe("VIP")
+  test("connectStateStream hydrates frontend state from websocket", async () => {
+    const { default: useStore } = await import("../store/useStore")
+    useStore.getState().connectStateStream()
+
+    socketHandlers?.onOpen?.()
+    socketHandlers?.onState(queueState)
+
+    const state = useStore.getState()
+    expect(state.isStreaming).toBe(true)
+    expect(state.pending).toHaveLength(1)
+    expect(state.bots).toHaveLength(1)
+    expect(state.error).toBeNull()
   })
 
-  test("bot processes order after PROCESS_TIME and moves to complete", () => {
-    jest.useFakeTimers()
-    const store = require("../store/useStore")
-    const s = store.default.getState()
-    s.newOrder("Normal")
-    s.addBot()
-    // fast-forward
-    jest.advanceTimersByTime(PROCESS_TIME)
-    const after = store.default.getState()
-    expect(after.complete.length).toBe(1)
-    jest.useRealTimers()
+  test("newOrder triggers mutation and waits for websocket state", async () => {
+    actionMocks.createOrderAction.mockResolvedValue(undefined)
+
+    const { default: useStore } = await import("../store/useStore")
+    await useStore.getState().newOrder("Normal")
+
+    expect(actionMocks.createOrderAction).toHaveBeenCalledWith("Normal")
+    expect(useStore.getState().isLoading).toBe(false)
   })
 
-  test("removing bot cancels processing", () => {
-    jest.useFakeTimers()
-    const store = require("../store/useStore")
-    const s = store.default.getState()
-    s.newOrder("Normal")
-    s.addBot()
-    // remove the bot before timer finishes
-    s.removeBot()
-    jest.advanceTimersByTime(PROCESS_TIME)
-    const after = store.default.getState()
-    // order should be still in pending and not in complete
-    expect(after.pending.length).toBeGreaterThanOrEqual(1)
-    expect(after.complete.length).toBe(0)
-    jest.useRealTimers()
+  test("addBot and removeBot trigger server actions", async () => {
+    actionMocks.addBotAction.mockResolvedValue(undefined)
+    actionMocks.removeBotAction.mockResolvedValue(undefined)
+
+    const { default: useStore } = await import("../store/useStore")
+    await useStore.getState().addBot()
+    expect(actionMocks.addBotAction).toHaveBeenCalled()
+
+    await useStore.getState().removeBot()
+    expect(actionMocks.removeBotAction).toHaveBeenCalled()
   })
 
-  test("multiple bots process multiple orders in parallel", () => {
-    jest.useFakeTimers()
-    const store = require("../store/useStore")
-    const s = store.default.getState()
-    // Add 3 orders
-    s.newOrder("Normal")
-    s.newOrder("VIP")
-    s.newOrder("Normal")
-    // Add 2 bots
-    s.addBot()
-    s.addBot()
-    // Both bots should pick up orders immediately
-    let bots = store.default.getState().bots
-    expect(bots.filter((b: any) => b.status === "BUSY").length).toBe(2)
-    // Fast-forward timers
-    jest.advanceTimersByTime(PROCESS_TIME)
-    const after = store.default.getState()
-    // 2 orders should be complete, 1 pending
-    expect(after.complete.length).toBe(2)
-    expect(after.pending.length).toBe(1)
-    jest.useRealTimers()
-  })
+  test("stores errors from failed server action", async () => {
+    actionMocks.removeBotAction.mockRejectedValue(new Error("Not Found"))
 
-  test("VIP orders are always prioritized by all bots", () => {
-    jest.useFakeTimers()
-    const store = require("../store/useStore")
-    const s = store.default.getState()
-    // Add 2 normal, 1 VIP, 1 normal
-    s.newOrder("Normal")
-    s.newOrder("Normal")
-    s.newOrder("VIP")
-    s.newOrder("Normal")
-    // Add 3 bots
-    s.addBot()
-    s.addBot()
-    s.addBot()
-    // Fast-forward timers
-    jest.advanceTimersByTime(PROCESS_TIME)
-    const after = store.default.getState()
-    // All bots should have processed an order, VIP should be in complete
-    expect(after.complete.find((o: any) => o.type === "VIP")).toBeTruthy()
-    expect(after.complete.length).toBe(3)
-    expect(after.pending.length).toBe(1)
-    jest.useRealTimers()
+    const { default: useStore } = await import("../store/useStore")
+    await useStore.getState().removeBot()
+
+    expect(useStore.getState().error).toBe("Not Found")
+    expect(useStore.getState().isLoading).toBe(false)
   })
 })

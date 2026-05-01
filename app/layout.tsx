@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FeedMe Test - OMS",
-  description: "Order Management System for FeedMe Test",
+  title: "McD - OMS",
+  description: "Order Management System with McD's theme",
 };
 
 export default function RootLayout({

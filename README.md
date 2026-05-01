@@ -18,6 +18,30 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Backend Integration (Server Actions)
+
+The frontend uses Next.js server actions to call backend endpoints directly (no `/api` proxy layer).
+
+Backend crafted with go: https://github.com/vernonht/go-qms
+
+Create `.env.local` in project root:
+
+```bash
+BACKEND_BASE_URL=http://localhost:8080
+NEXT_PUBLIC_BACKEND_WS_URL=ws://localhost:8080
+```
+
+Expected backend endpoints from Swagger:
+
+- `POST /orders`
+- `POST /bots`
+- `DELETE /bots`
+- `GET /state`
+
+Server actions are implemented in `app/actions/queueActions.ts` for mutations/initial fetch.
+
+Live updates use WebSocket on `/state` from the browser, using `NEXT_PUBLIC_BACKEND_WS_URL` as the socket base URL (`ws://.../state` or `wss://.../state`).
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More
